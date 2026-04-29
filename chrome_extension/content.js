@@ -70,15 +70,24 @@ async function injectReplyText(article, replyText) {
     throw new Error("Reply textarea did not appear");
   }
 
-  // Let Draft.js fully mount and register its event listeners.
-  await sleep(300);
+  // Let Draft.js fully mount, register its event listeners, and finish any
+  // pre-fill (e.g. @mention insertion) before we touch the editor.
+  await sleep(500);
 
   textbox.focus();
 
-  // Replace any pre-filled content (e.g. @mention) by selecting everything
-  // first. Do NOT call execCommand('delete') separately — Draft.js requires
-  // the selection it owns; insertText replaces the selection in one step.
-  document.execCommand("selectAll", false, null);
+  // Select the editor's contents via the Range API rather than
+  // execCommand('selectAll'). The 'selectAll' command makes Draft.js fire its
+  // own beforeinput handling cycle in addition to the one triggered by
+  // insertText, which can cause the inserted text to appear duplicated in the
+  // DOM (the underlying editor state ends up correct, but the visual is wrong).
+  // Range-based selection is a synchronous DOM-only mutation — no input events.
+  const selection = window.getSelection();
+  const range = document.createRange();
+  range.selectNodeContents(textbox);
+  selection.removeAllRanges();
+  selection.addRange(range);
+
   document.execCommand("insertText", false, replyText);
 }
 
