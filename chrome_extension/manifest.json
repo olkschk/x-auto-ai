@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "X AUTO — AI Reply",
+  "version": "1.0.0",
+  "description": "Adds an AI Reply button under every tweet in the X feed. Generates a reply via local Claude server.",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://x.com/*",
+    "https://twitter.com/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://x.com/*", "https://twitter.com/*"],
+      "js": ["content.js"],
+      "css": ["styles.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": false
+  },
+  "action": {
+    "default_title": "X AUTO — AI Reply",
+    "default_popup": "options.html"
+  }
+}

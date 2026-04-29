@@ -1,0 +1,46 @@
+.ai-reply-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  margin-left: 8px;
+  background: linear-gradient(135deg, #1d9bf0, #0d6efd);
+  color: #fff;
+  border: none;
+  border-radius: 9999px;
+  font: 600 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  cursor: pointer;
+  user-select: none;
+  transition: transform 0.1s ease, opacity 0.1s ease;
+}
+
+.ai-reply-btn:hover {
+  transform: scale(1.04);
+}
+
+.ai-reply-btn:active {
+  transform: scale(0.97);
+}
+
+.ai-reply-btn[disabled] {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.ai-reply-toast {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 999999;
+  max-width: 360px;
+  padding: 10px 14px;
+  background: #b91c1c;
+  color: #fff;
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  font: 500 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.ai-reply-toast.success {
+  background: #15803d;
+}
