@@ -1,9 +1,14 @@
+.ai-reply-row {
+  display: flex;
+  gap: 8px;
+  padding: 6px 12px 4px;
+}
+
 .ai-reply-btn {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   padding: 4px 10px;
-  margin-left: 8px;
   background: linear-gradient(135deg, #1d9bf0, #0d6efd);
   color: #fff;
   border: none;

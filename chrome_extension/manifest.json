@@ -16,6 +16,12 @@
       "js": ["content.js"],
       "css": ["styles.css"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://x.com/*", "https://twitter.com/*"],
+      "js": ["injected.js"],
+      "world": "MAIN",
+      "run_at": "document_start"
     }
   ],
   "options_ui": {

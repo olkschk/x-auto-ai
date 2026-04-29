@@ -31,18 +31,30 @@ function extractTweetText(tweetEl) {
   return node ? node.innerText.trim() : "";
 }
 
-async function waitForElement(selector, root = document, timeoutMs = 5000) {
-  const start = performance.now();
-  return new Promise((resolve, reject) => {
-    const tick = () => {
-      const el = root.querySelector(selector);
-      if (el) return resolve(el);
-      if (performance.now() - start > timeoutMs) {
-        return reject(new Error(`Timed out waiting for ${selector}`));
+// Polls the DOM until the selector matches or timeout is reached.
+// Resolves with the element on success, or null on timeout.
+// Uses a MutationObserver instead of a per-frame loop so we wake up only when
+// the DOM actually changes — gives Draft.js a more consistent mount state by
+// the time we resolve.
+function waitForElement(selector, timeoutMs = 5000) {
+  return new Promise((resolve) => {
+    const found = document.querySelector(selector);
+    if (found) return resolve(found);
+
+    const observer = new MutationObserver(() => {
+      const el = document.querySelector(selector);
+      if (el) {
+        observer.disconnect();
+        resolve(el);
       }
-      requestAnimationFrame(tick);
-    };
-    tick();
+    });
+
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    setTimeout(() => {
+      observer.disconnect();
+      resolve(null);
+    }, timeoutMs);
   });
 }
 
@@ -52,6 +64,33 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // generated text. Uses execCommand selectAll + insertText: this triggers the
 // browser's native input handling, which fires beforeinput/input events that
 // Draft.js (X's editor) listens to. Plain DOM mutation is ignored by Draft.js.
+let __insertReqCounter = 0;
+
+// Delegates the actual selectAll + insertText to injected.js, which runs in
+// the page's MAIN world (same JS context as Draft.js). Calling execCommand
+// directly from this isolated content script results in the inserted text
+// being rendered twice in the editor — Draft.js doesn't preventDefault the
+// beforeinput event when it comes from an isolated-world execCommand, so the
+// browser's native insertion fires alongside Draft.js's React render.
+function delegateInsertion(text, timeoutMs = 5000) {
+  return new Promise((resolve) => {
+    const id = ++__insertReqCounter;
+    const onMessage = (e) => {
+      if (e.source !== window) return;
+      const data = e.data;
+      if (!data || data.type !== "X_AUTO_INSERT_RES" || data.id !== id) return;
+      window.removeEventListener("message", onMessage);
+      resolve(data);
+    };
+    window.addEventListener("message", onMessage);
+    window.postMessage({ type: "X_AUTO_INSERT_REQ", id, text }, "*");
+    setTimeout(() => {
+      window.removeEventListener("message", onMessage);
+      resolve({ success: false, reason: "timeout" });
+    }, timeoutMs);
+  });
+}
+
 async function injectReplyText(article, replyText) {
   const replyButton = article.querySelector('[data-testid="reply"]');
   if (!replyButton) {
@@ -60,29 +99,24 @@ async function injectReplyText(article, replyText) {
   replyButton.click();
 
   const EDITOR_SELECTOR = [
+    '[data-testid="tweetTextarea_0"][contenteditable="true"]',
     '[data-testid="tweetTextarea_0"] div[contenteditable="true"]',
     'div[role="textbox"][contenteditable="true"]',
     'div[contenteditable="true"][data-offset-key]',
   ].join(", ");
 
-  const textbox = await waitForElement(EDITOR_SELECTOR, document, 6000);
+  const textbox = await waitForElement(EDITOR_SELECTOR, 6000);
   if (!textbox) {
     throw new Error("Reply textarea did not appear");
   }
 
-  // Give DraftJS time to fully mount and register its event listeners.
+  // Give Draft.js time to fully mount and register its event listeners.
   await sleep(300);
 
-  textbox.focus();
-
-  // Select existing content (e.g. pre-filled @mention) then replace it.
-  // Do NOT call execCommand('delete') separately — DraftJS breaks if delete
-  // runs without a selection that it owns, and the next insertText falls
-  // through to whatever editor is currently active (e.g. the home composer
-  // instead of the reply composer). insertText replaces the selection in
-  // one step.
-  document.execCommand("selectAll", false, null);
-  document.execCommand("insertText", false, replyText);
+  const result = await delegateInsertion(replyText);
+  if (!result.success) {
+    throw new Error(result.reason || "Insertion failed in page world");
+  }
 }
 
 async function callServer(tweetText) {
@@ -130,14 +164,23 @@ async function handleReply(button, tweetEl) {
   }
 }
 
+function isTweetArticle(node) {
+  return (
+    node.nodeType === Node.ELEMENT_NODE &&
+    node.tagName === "ARTICLE" &&
+    node.getAttribute("data-testid") === "tweet"
+  );
+}
+
 function injectButton(tweetEl) {
   if (tweetEl.getAttribute(INJECTED_FLAG)) return;
-  const bar = findActionBar(tweetEl);
-  if (!bar) return;
-  if (bar.querySelector(`.${BUTTON_CLASS}`)) {
-    tweetEl.setAttribute(INJECTED_FLAG, "1");
-    return;
-  }
+  tweetEl.setAttribute(INJECTED_FLAG, "1");
+
+  const actionBar = findActionBar(tweetEl);
+  if (!actionBar) return;
+
+  const container = document.createElement("div");
+  container.className = "ai-reply-row";
 
   const btn = document.createElement("button");
   btn.className = BUTTON_CLASS;
@@ -149,16 +192,30 @@ function injectButton(tweetEl) {
     handleReply(btn, tweetEl);
   });
 
-  bar.appendChild(btn);
-  tweetEl.setAttribute(INJECTED_FLAG, "1");
+  container.appendChild(btn);
+
+  // Insert as a sibling AFTER the action bar (not inside it). Inside the
+  // [role="group"] X has its own click delegation that interferes with
+  // ours and may cause stray events during the reply modal mount.
+  actionBar.parentNode.insertBefore(container, actionBar.nextSibling);
 }
 
-function scanAndInject() {
-  document
-    .querySelectorAll('article[data-testid="tweet"]')
-    .forEach(injectButton);
-}
+// Process only newly-added nodes per mutation, not the entire document.
+// Full-document scans during DraftJS mount cause extra DOM churn that the
+// editor reacts to, leading to duplicated text on insertion.
+const observer = new MutationObserver((mutations) => {
+  for (const mutation of mutations) {
+    for (const node of mutation.addedNodes) {
+      if (node.nodeType !== Node.ELEMENT_NODE) continue;
+      if (isTweetArticle(node)) {
+        injectButton(node);
+      }
+      node.querySelectorAll?.('article[data-testid="tweet"]').forEach(injectButton);
+    }
+  }
+});
 
-const observer = new MutationObserver(() => scanAndInject());
 observer.observe(document.body, { childList: true, subtree: true });
-scanAndInject();
+
+// Initial pass for tweets already in the DOM at content-script load.
+document.querySelectorAll('article[data-testid="tweet"]').forEach(injectButton);
