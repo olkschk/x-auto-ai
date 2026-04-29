@@ -76,18 +76,15 @@ async function injectReplyText(article, replyText) {
 
   textbox.focus();
 
-  // Select the editor's contents via the Range API rather than
-  // execCommand('selectAll'). The 'selectAll' command makes Draft.js fire its
-  // own beforeinput handling cycle in addition to the one triggered by
-  // insertText, which can cause the inserted text to appear duplicated in the
-  // DOM (the underlying editor state ends up correct, but the visual is wrong).
-  // Range-based selection is a synchronous DOM-only mutation — no input events.
-  const selection = window.getSelection();
-  const range = document.createRange();
-  range.selectNodeContents(textbox);
-  selection.removeAllRanges();
-  selection.addRange(range);
-
+  // Draft.js needs its own selectAll path to establish editor-owned selection
+  // (the Range API alone doesn't make Draft.js treat the editor as the input
+  // target, so insertText becomes a no-op). After that, delete the selection
+  // explicitly and let a fresh microtask settle before inserting — this avoids
+  // a known Draft.js render quirk where selectAll + insertText fired back-to-
+  // back can duplicate the text in the DOM.
+  document.execCommand("selectAll", false, null);
+  document.execCommand("delete", false, null);
+  await sleep(0);
   document.execCommand("insertText", false, replyText);
 }
 
