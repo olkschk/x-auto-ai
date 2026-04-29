@@ -35,6 +35,29 @@ from core.x_session import assert_logged_in, x_browser
 logger = setup_logger("run")
 
 
+# Substrings that indicate a known shutdown race rather than a real failure.
+# On Ctrl+C, Windows sends the signal to the whole process group, so the
+# Playwright Node subprocess dies before we get to await browser.close() —
+# producing "Connection closed" / "Target closed" / "BrowserContext closed"
+# errors that are harmless (the OS reaps the subprocess regardless).
+_BENIGN_SHUTDOWN_FRAGMENTS = (
+    "Connection closed",
+    "Target closed",
+    "Target page, context or browser has been closed",
+    "Browser has been closed",
+    "BrowserContext.close",
+    "has been closed",
+)
+
+
+def _log_cleanup_error(exc: Exception) -> None:
+    msg = str(exc)
+    if any(fragment in msg for fragment in _BENIGN_SHUTDOWN_FRAGMENTS):
+        logger.debug("Shutdown race in cleanup (harmless): %s", msg)
+        return
+    logger.exception("Cleanup error", exc_info=exc)
+
+
 async def run(x_users: list[str], tg_channels: list[str]) -> None:
     cfg = Config.load()
     rules = load_rules()
@@ -122,8 +145,8 @@ async def run(x_users: list[str], tg_channels: list[str]) -> None:
         for cb in reversed(cleanup):
             try:
                 await cb()
-            except Exception:
-                logger.exception("Cleanup error")
+            except Exception as e:
+                _log_cleanup_error(e)
         return
 
     logger.info("Started %d monitor task(s): %s", len(tasks), ", ".join(t.get_name() for t in tasks))
@@ -141,8 +164,8 @@ async def run(x_users: list[str], tg_channels: list[str]) -> None:
         for cb in reversed(cleanup):
             try:
                 await cb()
-            except Exception:
-                logger.exception("Cleanup error")
+            except Exception as e:
+                _log_cleanup_error(e)
 
 
 def main() -> None:
